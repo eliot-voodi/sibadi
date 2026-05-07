@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Мои занятия</h1>
+
+<div class="card">
+    <h2>Фильтры</h2>
+    <form method="get" style="display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: end;">
+        <div style="flex: 1; min-width: 200px;">
+            <label>Группа</label>
+            <select name="group">
+                <option value="">Все группы</option>
+                {% for g in common.группы %}
+                <option value="{{ g[0] }}" {% if request.args.get('group') == g[0]|string %}selected{% endif %}>{{ g[1] }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="flex: 1; min-width: 200px;">
+            <label>Дисциплина</label>
+            <select name="disc">
+                <option value="">Все дисциплины</option>
+                {% for d in common.дисциплины %}
+                <option value="{{ d[0] }}" {% if request.args.get('disc') == d[0]|string %}selected{% endif %}>{{ d[1] }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="flex: 1; min-width: 200px;">
+            <label>Курс (семестр)</label>
+            <select name="kurs">
+                <option value="">Все курсы</option>
+                {% for k in range(1, 7) %}
+                <option value="{{ k }}" {% if request.args.get('kurs') == k|string %}selected{% endif %}>{{ k }} курс</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="display: flex; gap: 1rem; align-items: end;">
+            <button type="submit" style="padding: 1rem 2rem; background: var(--primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; height: 3.5rem; display: flex; align-items: center; justify-content: center;">
+                Применить
+            </button>
+            
+            <!-- ИСПРАВЛЕННАЯ КНОПКА ЭКСПОРТА В EXCEL -->
+            <a href="{{ url_for('export_zanyatiya_user', **request.args) }}"
+               style="display: inline-flex; align-items: center; justify-content: center; gap: 0.8rem; 
+                      padding: 1rem 1.8rem; background: #27ae60; color: white; text-decoration: none; 
+                      border-radius: 8px; font-weight: 600; white-space: nowrap; height: 3.5rem;">
+                <i class="fas fa-file-download"></i>
+                Экспорт в Excel
+            </a>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Расписание занятий</h2>
+    <div class="table-container">
+        {% if data %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Группа</th>
+                    <th>Дисциплина</th>
+                    <th>Курс</th>
+                    <th>Средство</th>
+                    <th>Описание</th>
+                    <th>Дата</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in data %}
+                <tr>
+                    <td data-label="Группа">{{ row[2] or '—' }}</td>
+                    <td data-label="Дисциплина">{{ row[3] or '—' }}</td>
+                    <td data-label="Курс">{{ row[4] }} курс</td>
+                    <td data-label="Средство">{{ row[5] or '—' }}</td>
+                    <td data-label="Описание">{{ row[6] or '—' }}</td>
+                    <td data-label="Дата">
+                        {% if row[7] %}
+                            {{ row[7].strftime('%d.%m.%Y') }}
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="text-align:center; color:var(--text-light); font-size:1.2rem; padding: 2rem 0;">
+            Занятия не найдены
+        </p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

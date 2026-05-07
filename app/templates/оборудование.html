@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Оборудование</h1>
+
+{% if can_create or item %}
+<div class="card">
+    <h2>{% if item %}Редактирование оборудования{% else %}Добавление оборудования{% endif %}</h2>
+    <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="form-grid">
+            <div>
+                <label>Название (средство)</label>
+                <select name="Название" required>
+                    {% for s in средства %}
+                    <option value="{{ s[1] }}" {% if item and item[1] == s[1] %}selected{% endif %}>{{ s[1] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Описание</label>
+                <textarea name="Описание">{{ item[2] if item else '' }}</textarea>
+            </div>
+            <div>
+                <label>Инвентарный номер</label>
+                <input type="text" name="Инвентарный_номер" value="{{ item[3] if item else '' }}">
+            </div>
+            <div>
+                <label>Сертификат ФСТЭК</label>
+                <input type="checkbox" name="Сертификат_ФСТЭК" {% if item and item[4] %}checked{% endif %}>
+            </div>
+            <div>
+                <label>В наличии</label>
+                <input type="checkbox" name="Наличие" {% if item and item[5] %}checked{% elif not item %}checked{% endif %}>
+            </div>
+        </div>
+        <button type="submit">{% if item %}Обновить{% else %}Добавить{% endif %}</button>
+    </form>
+</div>
+{% endif %}
+
+<div class="card">
+    <h2>Существующее оборудование</h2>
+    <div class="table-container">
+        {% if data %}
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Название</th>
+                    <th>Описание</th>
+                    <th>Инв.№</th>
+                    <th>ФСТЭК</th>
+                    <th>Наличие</th>
+                    {% if can_edit or can_delete %}<th style="width: 280px;">Действия</th>{% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in data %}
+                <tr>
+                    <td data-label="ID">{{ row[0] }}</td>
+                    <td data-label="Название">{{ row[1] }}</td>
+                    <td data-label="Описание">{{ row[2] or '' }}</td>
+                    <td data-label="Инв.№">{{ row[3] or '' }}</td>
+                    <td data-label="ФСТЭК">{% if row[4] %}Да{% else %}Нет{% endif %}</td>
+                    <td data-label="Наличие">{% if row[5] %}Да{% else %}Нет{% endif %}</td>
+                    {% if can_edit or can_delete %}
+                    <td class="actions">
+                        {% if can_edit %}
+                        <a href="/оборудование/{{ row[0] }}" class="btn-edit">
+                            <i class="fas fa-edit"></i> Редактировать
+                        </a>
+                        {% endif %}
+                        {% if can_delete %}
+                        <form method="post" action="/оборудование/delete/{{ row[0] }}" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn-delete" onclick="return confirm('Удалить оборудование?')">
+                                <i class="fas fa-trash"></i> Удалить
+                            </button>
+                        </form>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="text-align:center; color:var(--text-light);">Нет записей</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

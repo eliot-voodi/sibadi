@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Управление правами доступа</h1>
+
+<div class="card">
+    <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="table-container" style="overflow-x: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 120px;">Роль</th>
+                        {% for ent in entities %}
+                        <th colspan="4" style="text-align:center;">{{ ent | replace('_', ' ') | title }}</th>
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <th></th>
+                        {% for ent in entities %}
+                        <th>Просмотр</th><th>Создание</th><th>Редакт.</th><th>Удаление</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for role in roles %}
+                    <tr {% if role[1] == 'Администратор' %}style="background:#f0f8ff; font-weight:bold;"{% endif %}>
+                        <td><strong>{{ role[1] }}{% if role[1] == 'Администратор' %} (права фиксированы){% endif %}</strong></td>
+                        
+                        {% if role[1] == 'Администратор' %}
+                            {# Для администратора — одна ячейка на сущность с colspan=4 #}
+                            {% for ent in entities %}
+                            <td colspan="4" style="text-align:center; background:#e8f4ff; color:#4361ee; font-weight:600;">
+                                Полный доступ
+                            </td>
+                            {% endfor %}
+                        {% else %}
+                            {# Для остальных ролей — обычные 4 чекбокса на каждую сущность #}
+                            {% for ent in entities %}
+                            {% set p = perms[role[0]][ent] %}
+                            <td style="text-align:center;"><input type="checkbox" name="{{ role[0] }}_{{ ent }}_view" {% if p[0] %}checked{% endif %}></td>
+                            <td style="text-align:center;"><input type="checkbox" name="{{ role[0] }}_{{ ent }}_create" {% if p[1] %}checked{% endif %}></td>
+                            <td style="text-align:center;"><input type="checkbox" name="{{ role[0] }}_{{ ent }}_edit" {% if p[2] %}checked{% endif %}></td>
+                            <td style="text-align:center;"><input type="checkbox" name="{{ role[0] }}_{{ ent }}_delete" {% if p[3] %}checked{% endif %}></td>
+                            {% endfor %}
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <button type="submit">Сохранить изменения</button>
+    </form>
+</div>
+{% endblock %}

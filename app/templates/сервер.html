@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Серверы</h1>
+
+{% if can_create or item %}
+<div class="card">
+    <h2>{% if item %}Редактирование сервера{% else %}Добавление сервера{% endif %}</h2>
+    <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="form-grid">
+            <div>
+                <label>Расположение</label>
+                <input type="text" name="Расположение" value="{{ item[1] if item else '' }}">
+            </div>
+            <div>
+                <label>CPU</label>
+                <input type="number" name="CPU" value="{{ item[2] if item else '' }}">
+            </div>
+            <div>
+                <label>vCPU</label>
+                <input type="number" name="vCPU" value="{{ item[3] if item else '' }}">
+            </div>
+            <div>
+                <label>RAM (ГБ)</label>
+                <input type="number" name="RAM" value="{{ item[4] if item else '' }}">
+            </div>
+            <div>
+                <label>Disk (ГБ)</label>
+                <input type="number" name="Disk" value="{{ item[5] if item else '' }}">
+            </div>
+        </div>
+        <button type="submit">{% if item %}Обновить{% else %}Добавить{% endif %}</button>
+    </form>
+</div>
+{% endif %}
+
+<div class="card">
+    <h2>Существующие серверы</h2>
+    <div class="table-container">
+        {% if data %}
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Расположение</th>
+                    <th>CPU</th>
+                    <th>vCPU</th>
+                    <th>RAM</th>
+                    <th>Disk</th>
+                    {% if can_edit or can_delete %}<th style="width: 280px;">Действия</th>{% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in data %}
+                <tr>
+                    <td data-label="ID">{{ row[0] }}</td>
+                    <td data-label="Расположение">{{ row[1] or '' }}</td>
+                    <td data-label="CPU">{{ row[2] or '' }}</td>
+                    <td data-label="vCPU">{{ row[3] or '' }}</td>
+                    <td data-label="RAM">{{ row[4] or '' }}</td>
+                    <td data-label="Disk">{{ row[5] or '' }}</td>
+                    {% if can_edit or can_delete %}
+                    <td class="actions">
+                        {% if can_edit %}
+                        <a href="/сервер/{{ row[0] }}" class="btn-edit">
+                            <i class="fas fa-edit"></i> Редактировать
+                        </a>
+                        {% endif %}
+                        {% if can_delete %}
+                        <form method="post" action="/сервер/delete/{{ row[0] }}" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn-delete" onclick="return confirm('Удалить сервер?')">
+                                <i class="fas fa-trash"></i> Удалить
+                            </button>
+                        </form>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="text-align:center; color:var(--text-light);">Нет записей</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

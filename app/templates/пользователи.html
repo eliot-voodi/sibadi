@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Пользователи</h1>
+
+{% if can_create or item %}
+<div class="card">
+    <h2>{% if item %}Редактирование пользователя{% else %}Добавление пользователя{% endif %}</h2>
+    <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="form-grid">
+            <div>
+                <label>Имя</label>
+                <input type="text" name="Имя" value="{{ item[1] if item else '' }}" required>
+            </div>
+            <div>
+                <label>Фамилия</label>
+                <input type="text" name="Фамилия" value="{{ item[2] if item else '' }}" required>
+            </div>
+            <div>
+                <label>Login</label>
+                <input type="text" name="Login" value="{{ item[3] if item else '' }}" required>
+            </div>
+            <div>
+                <label>Пароль{% if item %} (оставьте пустым, чтобы не менять){% endif %}</label>
+                <input type="password" name="Password" {% if not item %}required{% endif %}>
+            </div>
+            {% if roles %}
+            <div>
+                <label>Роль</label>
+                <select name="role_id">
+                    {% for r in roles %}
+                    <option value="{{ r[0] }}" {% if item and item[4] == r[0] %}selected{% endif %}>{{ r[1] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+        </div>
+        <button type="submit">{% if item %}Обновить{% else %}Добавить{% endif %}</button>
+    </form>
+</div>
+{% endif %}
+
+<div class="card">
+    <h2>Существующие пользователи</h2>
+    <div class="table-container">
+        {% if data %}
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Имя</th>
+                    <th>Фамилия</th>
+                    <th>Login</th>
+                    <th>Роль</th>
+                    {% if can_edit or can_delete %}<th style="width: 280px;">Действия</th>{% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in data %}
+                <tr>
+                    <td data-label="ID">{{ row[0] }}</td>
+                    <td data-label="Имя">{{ row[1] }}</td>
+                    <td data-label="Фамилия">{{ row[2] }}</td>
+                    <td data-label="Login">{{ row[3] }}</td>
+                    <td data-label="Роль">{{ row[4] or '—' }}</td>
+                    {% if can_edit or can_delete %}
+                    <td class="actions">
+                        {% if can_edit %}
+                        <a href="/пользователи/{{ row[0] }}" class="btn-edit">
+                            <i class="fas fa-edit"></i> Редактировать
+                        </a>
+                        {% endif %}
+                        {% if can_delete %}
+                        <form method="post" action="/пользователи/delete/{{ row[0] }}" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn-delete" onclick="return confirm('Удалить пользователя?')">
+                                <i class="fas fa-trash"></i> Удалить
+                            </button>
+                        </form>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="text-align:center; color:var(--text-light);">Нет записей</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
