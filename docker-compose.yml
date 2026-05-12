@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASS:-password}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
       - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
 #    ports:
 #      - "5432:5432"
@@ -36,8 +36,8 @@ services:
     depends_on:
       - web
     ports:
-      - "8082:443"
-      - "8081:80"
+      - "8084:443"
+      - "8083:80"
     environment:
       SSL_CN: ${SSL_CN:-localhost}
     volumes:

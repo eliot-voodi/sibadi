@@ -15,6 +15,29 @@ app = Flask(__name__)
 app.secret_key = get_secret_key()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
+
+def _optional_query_int(val):
+    """Безопасное целое из query string: только цифры, иначе None (для фильтров вместе с %s)."""
+    if val is None or val == "":
+        return None
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return None
+
+
+def _optional_form_fk(val):
+    """Необязательный FK из формы: пусто → None, иначе положительное int или ValueError."""
+    if val is None or (isinstance(val, str) and not val.strip()):
+        return None
+    try:
+        i = int(val)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("Некорректный идентификатор") from exc
+    if i < 1:
+        raise ValueError("Некорректный идентификатор")
+    return i
+
 get_db, close_db = init_db(get_db_config())
 init_security(get_db, get_admin_bootstrap_config())
 app.teardown_appcontext(close_db)
@@ -419,11 +442,16 @@ def занятие(item_id=None):
         if not item_id and not has_permission(entity, 'create'):
             abort(403)
 
-        prep = request.form['id_преподавателя'] or None
-        group = request.form['id_группы'] or None
-        disc = request.form['id_дисциплины'] or None
+        try:
+            prep = _optional_form_fk(request.form.get('id_преподавателя'))
+            group = _optional_form_fk(request.form.get('id_группы'))
+            disc = _optional_form_fk(request.form.get('id_дисциплины'))
+            sred = _optional_form_fk(request.form.get('id_средства'))
+        except ValueError:
+            flash('Некорректные идентификаторы в форме', 'error')
+            return redirect(url_for('занятие', item_id=item_id) if item_id else url_for('занятие'))
+
         sem = request.form['Семестр']
-        sred = request.form['id_средства'] or None
         desc = request.form.get('Описание', '').strip() or None
         date = request.form['Дата']
 
@@ -737,19 +765,18 @@ def занятия_пользователь():
     """
     params = []
 
-    # Фильтры (без изменений)
-    group = request.args.get('group')
-    if group:
+    group = _optional_query_int(request.args.get('group'))
+    if group is not None:
         query += " AND z.id_группы = %s"
         params.append(group)
 
-    disc = request.args.get('disc')
-    if disc:
+    disc = _optional_query_int(request.args.get('disc'))
+    if disc is not None:
         query += " AND z.id_дисциплины = %s"
         params.append(disc)
 
-    kurs = request.args.get('kurs')
-    if kurs:
+    kurs = _optional_query_int(request.args.get('kurs'))
+    if kurs is not None:
         query += " AND z.Семестр = %s"
         params.append(kurs)
 
@@ -788,18 +815,18 @@ def export_zanyatiya_user():
     """
     params = []
 
-    group = request.args.get('group')
-    if group:
+    group = _optional_query_int(request.args.get('group'))
+    if group is not None:
         query += " AND z.id_группы = %s"
         params.append(group)
 
-    disc = request.args.get('disc')
-    if disc:
+    disc = _optional_query_int(request.args.get('disc'))
+    if disc is not None:
         query += " AND z.id_дисциплины = %s"
         params.append(disc)
 
-    kurs = request.args.get('kurs')
-    if kurs:
+    kurs = _optional_query_int(request.args.get('kurs'))
+    if kurs is not None:
         query += " AND z.Семестр = %s"
         params.append(kurs)
 
