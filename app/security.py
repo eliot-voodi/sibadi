@@ -1,6 +1,12 @@
 import secrets
 import string
 import sys
+import os
+import time
+import logging
+from collections import deque
+from threading import Lock
+
 from flask import abort, g, redirect, request, session, url_for
 from psycopg2 import errors
 from werkzeug.security import generate_password_hash
@@ -11,6 +17,10 @@ _admin_bootstrap_config = {}
 _admin_checked = False
 _allowed_actions = {"view", "create", "edit", "delete"}
 _PUBLIC_ENDPOINTS = frozenset({"login", "logout", "static", "healthz"})
+
+_bf_lock = Lock()
+_bf_recent_failures: dict[str, deque] = {}
+_bf_lockout_until: dict[str, float] = {}
 
 # Типичные требования ГОСТ Р 71753 / рекомендаций ФСТЭК к парольной защите:
 # длина не менее 12 символов, использование не менее трёх классов символов
@@ -45,6 +55,75 @@ def init_security(get_db_fn, admin_bootstrap_config: dict):
     _admin_bootstrap_config = admin_bootstrap_config
 
 
+def get_client_ip() -> str:
+    """IP клиента за reverse proxy (заголовки от Nginx) либо remote_addr."""
+    xff = request.headers.get("X-Forwarded-For")
+    if xff:
+        return xff.split(",")[0].strip()[:256] or "unknown"
+    rip = request.headers.get("X-Real-IP")
+    if rip:
+        return rip.strip()[:256] or "unknown"
+    return request.remote_addr or "unknown"
+
+
+def _login_bf_window_sec() -> float:
+    return max(60.0, float(os.getenv("LOGIN_BF_WINDOW_SEC", "600")))
+
+
+def _login_bf_max_attempts() -> int:
+    return max(1, int(os.getenv("LOGIN_BF_MAX_ATTEMPTS", "8")))
+
+
+def _login_bf_lockout_sec() -> float:
+    return max(60.0, float(os.getenv("LOGIN_BF_LOCKOUT_SEC", "900")))
+
+
+def login_bruteforce_reset(ip: str) -> None:
+    """Сброс счётчиков после успешного входа."""
+    with _bf_lock:
+        _bf_recent_failures.pop(ip, None)
+        _bf_lockout_until.pop(ip, None)
+
+
+def login_bruteforce_register_failure(ip: str) -> None:
+    """Учесть неудачную попытку входа; при превышении порога — блокировка IP."""
+    now = time.time()
+    window = _login_bf_window_sec()
+    lockout_dur = _login_bf_lockout_sec()
+    max_fails = _login_bf_max_attempts()
+    with _bf_lock:
+        dq = _bf_recent_failures.setdefault(ip, deque())
+        cutoff = now - window
+        while dq and dq[0] < cutoff:
+            dq.popleft()
+        dq.append(now)
+        if len(dq) >= max_fails:
+            _bf_lockout_until[ip] = now + lockout_dur
+            dq.clear()
+            logging.warning(
+                "Блокировка входа после неудачных попыток: ip=%s, lockout_sec=%s",
+                ip,
+                int(lockout_dur),
+            )
+
+
+def login_bruteforce_blocked(ip: str) -> tuple[bool, int]:
+    """
+    Заблокирован ли вход с IP и сколько секунд осталось до разблокировки.
+    Истёкшая блокировка снимается при проверке.
+    """
+    now = time.time()
+    with _bf_lock:
+        until = _bf_lockout_until.get(ip)
+        if until is None:
+            return False, 0
+        if now >= until:
+            del _bf_lockout_until[ip]
+            _bf_recent_failures.pop(ip, None)
+            return False, 0
+        return True, max(1, int(until - now))
+
+
 def _try_insert_admin_user(cur, conn, login: str, plain_password: str) -> bool:
     """
     Создать администратора. True — запись добавлена; False — роль не найдена или логин уже занят (гонка воркеров).
@@ -58,15 +137,14 @@ def _try_insert_admin_user(cur, conn, login: str, plain_password: str) -> bool:
     try:
         cur.execute(
             """
-            INSERT INTO "Пользователи" (Имя, Фамилия, Login, Password, Группа_доступа, role_id)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO "Пользователи" (Имя, Фамилия, Login, Password, role_id)
+            VALUES (%s, %s, %s, %s, %s)
             """,
             (
                 "Админ",
                 "Администратор",
                 login,
                 generate_password_hash(plain_password),
-                "Администраторы",
                 admin_role[0],
             ),
         )
@@ -238,13 +316,14 @@ def has_permission(entity, action):
         cur.execute(
             """
             SELECT CASE %s
-                WHEN 'view' THEN can_view
-                WHEN 'create' THEN can_create
-                WHEN 'edit' THEN can_edit
-                WHEN 'delete' THEN can_delete
+                WHEN 'view' THEN p.can_view
+                WHEN 'create' THEN p.can_create
+                WHEN 'edit' THEN p.can_edit
+                WHEN 'delete' THEN p.can_delete
             END
-            FROM Permissions
-            WHERE role_id = %s AND entity = %s
+            FROM Permissions p
+            INNER JOIN permission_entities e ON p.entity_id = e.id
+            WHERE p.role_id = %s AND e.code = %s
             """,
             (action, role_id, entity),
         )

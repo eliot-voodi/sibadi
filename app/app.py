@@ -1,19 +1,47 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session, g, abort
-from werkzeug.security import generate_password_hash, check_password_hash
-from psycopg2 import sql
-from flask import send_file
+import logging
+import os
+from datetime import datetime
 from io import BytesIO
+
+from flask import Flask, render_template, request, redirect, url_for, flash, session, g, abort
+from flask import current_app
+from flask import send_file
+from flask_limiter import Limiter
 from openpyxl import Workbook
 from openpyxl.styles import Font
-from datetime import datetime
-import logging
-from config import get_secret_key, get_db_config, get_admin_bootstrap_config
+from psycopg2 import sql
+from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import generate_password_hash, check_password_hash
+
+from config import (
+    get_secret_key,
+    get_db_config,
+    get_admin_bootstrap_config,
+    warn_if_weak_secret_key,
+)
 from database import init_db
-from security import init_security, has_permission, before_request_setup, inject_admin
+from security import (
+    init_security,
+    has_permission,
+    before_request_setup,
+    inject_admin,
+    get_client_ip,
+    login_bruteforce_blocked,
+    login_bruteforce_reset,
+    login_bruteforce_register_failure,
+)
 
 app = Flask(__name__)
 app.secret_key = get_secret_key()
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+warn_if_weak_secret_key(app.secret_key)
+
+limiter = Limiter(
+    key_func=get_client_ip,
+    storage_uri=os.getenv("RATE_LIMIT_STORAGE_URI", "memory://"),
+)
+limiter.init_app(app)
 
 
 def _optional_query_int(val):
@@ -46,9 +74,21 @@ app.context_processor(inject_admin)
 
 # ==================== АВТОРИЗАЦИЯ ====================
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit(os.getenv('LOGIN_RATE_LIMIT_POST', '12 per minute'), methods=['POST'])
+@limiter.limit(os.getenv('LOGIN_RATE_LIMIT', '60 per minute'))
 def login():
     if request.method == 'POST':
-        login_val = request.form['Login']
+        ip = get_client_ip()
+        blocked, retry_sec = login_bruteforce_blocked(ip)
+        if blocked:
+            mins = max(1, (retry_sec + 59) // 60)
+            flash(
+                f'Слишком много неудачных попыток входа. Повторите через ~{mins} мин.',
+                'error',
+            )
+            return render_template('login.html'), 429
+
+        login_val = request.form['Login'].strip()
         password = request.form['Password']
         conn = get_db()
         cur = conn.cursor()
@@ -56,10 +96,12 @@ def login():
         user = cur.fetchone()
         cur.close()
         if user and check_password_hash(user[1], password):
+            login_bruteforce_reset(ip)
             session['user_id'] = user[0]
             session['role_id'] = user[2]
             flash('Вы успешно вошли в систему', 'success')
             return redirect(url_for('index'))
+        login_bruteforce_register_failure(ip)
         flash('Неверный логин или пароль', 'error')
     return render_template('login.html')
 
@@ -75,6 +117,7 @@ def index():
 
 
 @app.route('/healthz')
+@limiter.exempt
 def healthz():
     return {"status": "ok"}, 200
 
@@ -108,7 +151,7 @@ def register_delete_route(entity, table_name, pk_name):
         'по': ('ПО', 'id_ПО'),
         'оборудование': ('Оборудование', 'id_Оборудования'),
         'занятие': ('Занятие', 'id_занятия'),
-        'сервер': ('Сервер', 'id'),
+        'сервер': ('Сервер', 'id_сервера'),
         'пользователи': ('Пользователи', 'id'),
     }
 
@@ -136,9 +179,12 @@ def register_delete_route(entity, table_name, pk_name):
             cur.execute(query, (item_id,))
             conn.commit()
             flash('Запись успешно удалена', 'success')
-        except Exception as e:
+        except Exception:
             conn.rollback()
-            flash(f'Ошибка при удалении: {str(e)}', 'error')
+            current_app.logger.exception(
+                'Ошибка удаления записи entity=%s item_id=%s', entity, item_id
+            )
+            flash('Не удалось удалить запись. Если проблема повторится, обратитесь к администратору.', 'error')
         finally:
             cur.close()
         return redirect(url_for(entity))
@@ -153,7 +199,7 @@ register_delete_route('средство', 'Средство', 'id_средств
 register_delete_route('по', 'ПО', 'id_ПО')
 register_delete_route('оборудование', 'Оборудование', 'id_Оборудования')
 register_delete_route('занятие', 'Занятие', 'id_занятия')
-register_delete_route('сервер', 'Сервер', 'id')
+register_delete_route('сервер', 'Сервер', 'id_сервера')
 register_delete_route('пользователи', 'Пользователи', 'id')
 
 # ==================== CRUD РОУТЫ ====================
@@ -345,24 +391,45 @@ def по(item_id=None):
         if not item_id and not has_permission(entity, 'create'):
             abort(403)
 
-        название = request.form['Название']
+        try:
+            id_средства = _optional_form_fk(request.form.get('id_средства'))
+        except ValueError:
+            flash('Выберите корректное средство', 'error')
+            return redirect(url_for('по', item_id=item_id) if item_id else url_for('по'))
+        if id_средства is None:
+            flash('Средство обязательно', 'error')
+            return redirect(url_for('по', item_id=item_id) if item_id else url_for('по'))
+
         описание = request.form.get('Описание', '').strip() or None
 
         if item_id:
-            cur.execute("UPDATE ПО SET Название = %s, Описание = %s WHERE id_ПО = %s", (название, описание, item_id))
+            cur.execute(
+                "UPDATE ПО SET id_средства = %s, Описание = %s WHERE id_ПО = %s",
+                (id_средства, описание, item_id),
+            )
             flash('ПО обновлено', 'success')
         else:
-            cur.execute("INSERT INTO ПО (Название, Описание) VALUES (%s, %s)", (название, описание))
+            cur.execute(
+                "INSERT INTO ПО (id_средства, Описание) VALUES (%s, %s)",
+                (id_средства, описание),
+            )
             flash('ПО добавлено', 'success')
         conn.commit()
         return redirect(url_for('по'))
 
     item = None
     if item_id:
-        cur.execute("SELECT id_ПО, Название, Описание FROM ПО WHERE id_ПО = %s", (item_id,))
+        cur.execute(
+            "SELECT id_ПО, id_средства, Описание FROM ПО WHERE id_ПО = %s",
+            (item_id,),
+        )
         item = cur.fetchone()
 
-    cur.execute("SELECT p.id_ПО, s.Название, p.Описание FROM ПО p JOIN Средство s ON p.Название = s.Название ORDER BY p.id_ПО")
+    cur.execute(
+        """SELECT p.id_ПО, s.Название, p.Описание FROM ПО p
+           JOIN Средство s ON p.id_средства = s.id_средства
+           ORDER BY p.id_ПО"""
+    )
     data = cur.fetchall()
     cur.close()
 
@@ -389,33 +456,57 @@ def оборудование(item_id=None):
         if not item_id and not has_permission(entity, 'create'):
             abort(403)
 
-        название = request.form['Название']
+        try:
+            id_средства = _optional_form_fk(request.form.get('id_средства'))
+        except ValueError:
+            flash('Выберите корректное средство', 'error')
+            return redirect(
+                url_for('оборудование', item_id=item_id) if item_id else url_for('оборудование')
+            )
+        if id_средства is None:
+            flash('Средство обязательно', 'error')
+            return redirect(
+                url_for('оборудование', item_id=item_id) if item_id else url_for('оборудование')
+            )
+
         описание = request.form.get('Описание', '').strip() or None
         инв_номер = request.form.get('Инвентарный_номер', '').strip() or None
         фстэк = 'Сертификат_ФСТЭК' in request.form
         наличие = 'Наличие' in request.form
 
         if item_id:
-            cur.execute("""UPDATE Оборудование SET Название = %s, Описание = %s, Инвентарный_номер = %s,
-                           Сертификат_ФСТЭК = %s, Наличие = %s WHERE id_Оборудования = %s""",
-                        (название, описание, инв_номер, фстэк, наличие, item_id))
+            cur.execute(
+                """UPDATE Оборудование SET id_средства = %s, Описание = %s, Инвентарный_номер = %s,
+                   Сертификат_ФСТЭК = %s, Наличие = %s WHERE id_Оборудования = %s""",
+                (id_средства, описание, инв_номер, фстэк, наличие, item_id),
+            )
             flash('Оборудование обновлено', 'success')
         else:
-            cur.execute("""INSERT INTO Оборудование (Название, Описание, Инвентарный_номер, Сертификат_ФСТЭК, Наличие)
-                           VALUES (%s, %s, %s, %s, %s)""", (название, описание, инв_номер, фстэк, наличие))
+            cur.execute(
+                """INSERT INTO Оборудование (id_средства, Описание, Инвентарный_номер, Сертификат_ФСТЭК, Наличие)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (id_средства, описание, инв_номер, фстэк, наличие),
+            )
             flash('Оборудование добавлено', 'success')
         conn.commit()
         return redirect(url_for('оборудование'))
 
     item = None
     if item_id:
-        cur.execute("""SELECT id_Оборудования, Название, Описание, Инвентарный_номер, Сертификат_ФСТЭК, Наличие
-                       FROM Оборудование WHERE id_Оборудования = %s""", (item_id,))
+        cur.execute(
+            """SELECT id_Оборудования, id_средства, Описание, Инвентарный_номер,
+               Сертификат_ФСТЭК, Наличие
+               FROM Оборудование WHERE id_Оборудования = %s""",
+            (item_id,),
+        )
         item = cur.fetchone()
 
-    cur.execute("""SELECT o.id_Оборудования, s.Название, o.Описание, o.Инвентарный_номер,
-                   o.Сертификат_ФСТЭК, o.Наличие
-                   FROM Оборудование o JOIN Средство s ON o.Название = s.Название ORDER BY o.id_Оборудования""")
+    cur.execute(
+        """SELECT o.id_Оборудования, s.Название, o.Описание, o.Инвентарный_номер,
+           o.Сертификат_ФСТЭК, o.Наличие
+           FROM Оборудование o JOIN Средство s ON o.id_средства = s.id_средства
+           ORDER BY o.id_Оборудования"""
+    )
     data = cur.fetchall()
     cur.close()
 
@@ -522,22 +613,32 @@ def сервер(item_id=None):
         disk = request.form.get('Disk') or None
 
         if item_id:
-            cur.execute("""UPDATE Сервер SET Расположение = %s, CPU = %s, vCPU = %s, RAM = %s, Disk = %s
-                           WHERE id = %s""", (расположение, cpu, vcpu, ram, disk, item_id))
+            cur.execute(
+                """UPDATE Сервер SET Расположение = %s, CPU = %s, vCPU = %s, RAM = %s, Disk = %s
+                   WHERE id_сервера = %s""",
+                (расположение, cpu, vcpu, ram, disk, item_id),
+            )
             flash('Сервер обновлён', 'success')
         else:
-            cur.execute("INSERT INTO Сервер (Расположение, CPU, vCPU, RAM, Disk) VALUES (%s, %s, %s, %s, %s)",
-                        (расположение, cpu, vcpu, ram, disk))
+            cur.execute(
+                "INSERT INTO Сервер (Расположение, CPU, vCPU, RAM, Disk) VALUES (%s, %s, %s, %s, %s)",
+                (расположение, cpu, vcpu, ram, disk),
+            )
             flash('Сервер добавлен', 'success')
         conn.commit()
         return redirect(url_for('сервер'))
 
     item = None
     if item_id:
-        cur.execute("SELECT id, Расположение, CPU, vCPU, RAM, Disk FROM Сервер WHERE id = %s", (item_id,))
+        cur.execute(
+            "SELECT id_сервера, Расположение, CPU, vCPU, RAM, Disk FROM Сервер WHERE id_сервера = %s",
+            (item_id,),
+        )
         item = cur.fetchone()
 
-    cur.execute("SELECT id, Расположение, CPU, vCPU, RAM, Disk FROM Сервер ORDER BY id")
+    cur.execute(
+        "SELECT id_сервера, Расположение, CPU, vCPU, RAM, Disk FROM Сервер ORDER BY id_сервера"
+    )
     data = cur.fetchall()
     cur.close()
 
@@ -677,61 +778,71 @@ def permissions():
     conn = get_db()
     cur = conn.cursor()
 
-    # Список сущностей — определяем ОДНИМ РАЗОМ в начале, доступен и в GET, и в POST
-    entities = ['группа','дисциплина','преподаватель','средство','по','оборудование','занятие','сервер','пользователи']
+    cur.execute(
+        """
+        SELECT id, code FROM permission_entities
+        WHERE code <> %s
+        ORDER BY sort_order
+        """,
+        ('permissions',),
+    )
+    entity_rows = cur.fetchall()
+    entities = [row[1] for row in entity_rows]
+    entity_id_by_code = {row[1]: row[0] for row in entity_rows}
 
     if request.method == 'POST':
-        # Находим ID роли Администратор
         cur.execute("SELECT id FROM Roles WHERE name = 'Администратор'")
         admin_role = cur.fetchone()
         admin_role_id = admin_role[0] if admin_role else None
 
-        # Получаем все роли
         cur.execute("SELECT id, name FROM Roles")
         roles = cur.fetchall()
 
         for role_id, role_name in roles:
-            # Никогда не трогаем права администратора
             if role_id == admin_role_id:
                 continue
 
-            # Удаляем старые права для этой роли (кроме админа)
             cur.execute("DELETE FROM Permissions WHERE role_id = %s", (role_id,))
 
-            # Вставляем новые
             for ent in entities:
+                entity_id = entity_id_by_code[ent]
                 view = f"{role_id}_{ent}_view" in request.form
                 create = f"{role_id}_{ent}_create" in request.form
                 edit = f"{role_id}_{ent}_edit" in request.form
                 delete = f"{role_id}_{ent}_delete" in request.form
 
-                cur.execute("""
-                    INSERT INTO Permissions (role_id, entity, can_view, can_create, can_edit, can_delete)
+                cur.execute(
+                    """
+                    INSERT INTO Permissions (role_id, entity_id, can_view, can_create, can_edit, can_delete)
                     VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (role_id, entity) DO UPDATE
+                    ON CONFLICT (role_id, entity_id) DO UPDATE
                     SET can_view = EXCLUDED.can_view,
                         can_create = EXCLUDED.can_create,
                         can_edit = EXCLUDED.can_edit,
                         can_delete = EXCLUDED.can_delete
-                """, (role_id, ent, view, create, edit, delete))
+                    """,
+                    (role_id, entity_id, view, create, edit, delete),
+                )
 
         conn.commit()
         flash('Права доступа обновлены', 'success')
 
-    # ------------------- Блок GET (или после POST) -------------------
     cur.execute("SELECT id, name FROM Roles")
     roles = cur.fetchall()
 
-    perms = {}
-    for role_id, _ in roles:
-        perms[role_id] = {}
-        for ent in entities:
-            cur.execute("SELECT can_view, can_create, can_edit, can_delete FROM Permissions WHERE role_id = %s AND entity = %s", (role_id, ent))
-            row = cur.fetchone()
-            if row:
-                perms[role_id][ent] = row
-            else:
-                perms[role_id][ent] = (False, False, False, False)
+    perms = {rid: {ent: (False, False, False, False) for ent in entities} for rid, _ in roles}
+    cur.execute(
+        """
+        SELECT p.role_id, e.code, p.can_view, p.can_create, p.can_edit, p.can_delete
+        FROM Permissions p
+        INNER JOIN permission_entities e ON p.entity_id = e.id
+        WHERE e.code <> %s
+        """,
+        ('permissions',),
+    )
+    for role_id, code, cv, cc, ce, cd in cur.fetchall():
+        if role_id in perms and code in perms[role_id]:
+            perms[role_id][code] = (cv, cc, ce, cd)
 
     cur.close()
 

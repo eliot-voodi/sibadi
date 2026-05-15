@@ -9,10 +9,10 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="form-grid">
             <div>
-                <label>Название (средство)</label>
-                <select name="Название" required>
+                <label>Средство</label>
+                <select name="id_средства" required>
                     {% for s in средства %}
-                    <option value="{{ s[1] }}" {% if item and item[1] == s[1] %}selected{% endif %}>{{ s[1] }}</option>
+                    <option value="{{ s[0] }}" {% if item and item[1] == s[0] %}selected{% endif %}>{{ s[1] }}</option>
                     {% endfor %}
                 </select>
             </div>

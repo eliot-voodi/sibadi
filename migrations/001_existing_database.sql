@@ -1,6 +1,9 @@
--- Миграция для УЖЕ существующей БД (PostgreSQL), до приведения к актуальному init-db.sql / схеме приложения.
--- Запуск (из корня проекта, docker compose уже поднят):
---   docker compose exec -T db psql -U postgres -d university -v ON_ERROR_STOP=1 < migrations/001_existing_database.sql
+-- Миграция для УЖЕ существующей БД (PostgreSQL), после приведения DDL к актуальной схеме приложения
+-- (см. postgres/docker-entrypoint-initdb.d/01-schema.sql): таблицы permission_entities и Permissions(role_id, entity_id),
+-- ПО/Оборудование со столбцом id_средства, Сервер.id_сервера, без столбца Группа_доступа в Пользователи.
+-- Запуск (из корня проекта, контейнер db работает). Нужен пользователь ОС postgres внутри
+-- контейнера (иначе локальный сокет даст peer authentication failed):
+--   docker compose exec -u postgres -T db psql -v ON_ERROR_STOP=1 -d university -f - < migrations/001_existing_database.sql
 
 BEGIN;
 
@@ -11,41 +14,38 @@ INSERT INTO Roles (name) VALUES ('Администратор'), ('Пользов
 ON CONFLICT (name) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
--- 2) Права администратора, пользователя и лаборанта (как в init-db.sql)
+-- 2) Права администратора, пользователя и лаборанта (как в postgres/docker-entrypoint-initdb.d/01-schema.sql)
 -- ---------------------------------------------------------------------------
-INSERT INTO Permissions (role_id, entity, can_view, can_create, can_edit, can_delete)
-SELECT r.id, e.entity, TRUE, TRUE, TRUE, TRUE
-FROM Roles r,
-     (VALUES
-       ('группа'), ('дисциплина'), ('преподаватель'), ('средство'), ('по'),
-       ('оборудование'), ('занятие'), ('сервер'), ('пользователи'), ('permissions')
-     ) AS e(entity)
+INSERT INTO Permissions (role_id, entity_id, can_view, can_create, can_edit, can_delete)
+SELECT r.id, e.id, TRUE, TRUE, TRUE, TRUE
+FROM Roles r
+CROSS JOIN permission_entities e
 WHERE r.name = 'Администратор'
-ON CONFLICT (role_id, entity) DO NOTHING;
+ON CONFLICT (role_id, entity_id) DO NOTHING;
 
-INSERT INTO Permissions (role_id, entity, can_view)
-SELECT r.id, e.entity, TRUE
-FROM Roles r,
-     (VALUES
-       ('группа'), ('дисциплина'), ('преподаватель'), ('средство'), ('по'),
-       ('оборудование'), ('занятие'), ('сервер'), ('пользователи'), ('permissions')
-     ) AS e(entity)
+INSERT INTO Permissions (role_id, entity_id, can_view)
+SELECT r.id, e.id, TRUE
+FROM Roles r
+JOIN permission_entities e ON e.code IN (
+    'группа', 'дисциплина', 'преподаватель', 'средство', 'по',
+    'оборудование', 'занятие', 'сервер'
+)
 WHERE r.name = 'Пользователь'
-ON CONFLICT (role_id, entity) DO NOTHING;
+ON CONFLICT (role_id, entity_id) DO NOTHING;
 
-INSERT INTO Permissions (role_id, entity, can_view, can_create, can_edit, can_delete)
-SELECT r.id, e.entity,
+INSERT INTO Permissions (role_id, entity_id, can_view, can_create, can_edit, can_delete)
+SELECT r.id, e.id,
        TRUE,
-       CASE WHEN e.entity IN ('занятие', 'средство', 'по', 'оборудование') THEN TRUE ELSE FALSE END,
-       CASE WHEN e.entity IN ('занятие', 'средство', 'по', 'оборудование') THEN TRUE ELSE FALSE END,
-       CASE WHEN e.entity IN ('занятие', 'средство', 'по', 'оборудование') THEN TRUE ELSE FALSE END
-FROM Roles r,
-     (VALUES
-       ('группа'), ('дисциплина'), ('преподаватель'), ('средство'), ('по'),
-       ('оборудование'), ('занятие'), ('сервер'), ('пользователи'), ('permissions')
-     ) AS e(entity)
+       CASE WHEN e.code IN ('занятие', 'средство', 'по', 'оборудование') THEN TRUE ELSE FALSE END,
+       CASE WHEN e.code IN ('занятие', 'средство', 'по', 'оборудование') THEN TRUE ELSE FALSE END,
+       CASE WHEN e.code IN ('занятие', 'средство', 'по', 'оборудование') THEN TRUE ELSE FALSE END
+FROM Roles r
+JOIN permission_entities e ON e.code IN (
+    'группа', 'дисциплина', 'преподаватель', 'средство', 'по',
+    'оборудование', 'занятие', 'сервер'
+)
 WHERE r.name = 'Лаборант'
-ON CONFLICT (role_id, entity) DO UPDATE
+ON CONFLICT (role_id, entity_id) DO UPDATE
 SET can_view = EXCLUDED.can_view,
     can_create = EXCLUDED.can_create,
     can_edit = EXCLUDED.can_edit,
