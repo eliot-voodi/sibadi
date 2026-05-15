@@ -13,7 +13,7 @@ if [ ! -f "$CERT_KEY" ] || [ ! -f "$CERT_CRT" ]; then
   openssl req -x509 -nodes -newkey rsa:2048 \
     -keyout "$CERT_KEY" \
     -out "$CERT_CRT" \
-    -days 7300 \
+    -days 18250 \
     -subj "/CN=$SSL_CN"
 else
   echo "[nginx] Using existing certificate from $CERT_DIR"

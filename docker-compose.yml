@@ -36,8 +36,8 @@ services:
     depends_on:
       - web
     ports:
-      - "8084:443"
-      - "8083:80"
+      - "443:443"
+      - "80:80"
     environment:
       SSL_CN: ${SSL_CN:-localhost}
     volumes:

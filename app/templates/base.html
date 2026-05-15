@@ -266,7 +266,8 @@
         <a href="/дисциплина" {% if request.path.startswith('/дисциплина') %}class="active"{% endif %}>Дисциплины</a>
         <a href="/преподаватель" {% if request.path.startswith('/преподаватель') %}class="active"{% endif %}>Преподаватели</a>
         <a href="/средство" {% if request.path.startswith('/средство') %}class="active"{% endif %}>Средства</a>
-        <a href="/по" {% if request.path.startswith('/по') %}class="active"{% endif %}>ПО</a>
+        {# /по нельзя отличать через startswith('/по') от /пользователи — тот же префикс #}
+        <a href="/по" {% if request.path == '/по' or request.path.startswith('/по/') %}class="active"{% endif %}>ПО</a>
         <a href="/оборудование" {% if request.path.startswith('/оборудование') %}class="active"{% endif %}>Оборудование</a>
         <a href="/занятие" {% if request.path.startswith('/занятие') %}class="active"{% endif %}>Занятия</a>
         <a href="/сервер" {% if request.path.startswith('/сервер') %}class="active"{% endif %}>Серверы</a>

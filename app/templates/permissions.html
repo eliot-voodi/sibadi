@@ -12,7 +12,7 @@
                         <th style="width: 120px;">Роль</th>
                         {% for ent in entities %}
                         <th colspan="4" style="text-align:center;">
-                            {% if ent == 'permissions' %}Права доступа{% else %}{{ ent | replace('_', ' ') | title }}{% endif %}
+                            {{ ent | replace('_', ' ') | title }}
                         </th>
                         {% endfor %}
                     </tr>

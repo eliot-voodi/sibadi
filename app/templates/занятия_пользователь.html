@@ -24,11 +24,11 @@
             </select>
         </div>
         <div style="flex: 1; min-width: 200px;">
-            <label>Курс (семестр)</label>
+            <label>Семестр</label>
             <select name="kurs">
-                <option value="">Все курсы</option>
-                {% for k in range(1, 7) %}
-                <option value="{{ k }}" {% if request.args.get('kurs') == k|string %}selected{% endif %}>{{ k }} курс</option>
+                <option value="">Все семестры</option>
+                {% for k in range(1, 10) %}
+                <option value="{{ k }}" {% if request.args.get('kurs') == k|string %}selected{% endif %}>{{ k }} семестр</option>
                 {% endfor %}
             </select>
         </div>
@@ -58,7 +58,7 @@
                 <tr>
                     <th>Группа</th>
                     <th>Дисциплина</th>
-                    <th>Курс</th>
+                    <th>Семестр</th>
                     <th>Средство</th>
                     <th>Описание</th>
                     <th>Дата</th>
@@ -69,7 +69,7 @@
                 <tr>
                     <td data-label="Группа">{{ row[2] or '—' }}</td>
                     <td data-label="Дисциплина">{{ row[3] or '—' }}</td>
-                    <td data-label="Курс">{{ row[4] }} курс</td>
+                    <td data-label="Семестр">{{ row[4] }} семестр</td>
                     <td data-label="Средство">{{ row[5] or '—' }}</td>
                     <td data-label="Описание">{{ row[6] or '—' }}</td>
                     <td data-label="Дата">
